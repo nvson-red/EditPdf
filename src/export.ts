@@ -1,0 +1,67 @@
+import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import type { EditorElement } from './types';
+// Font DejaVu Sans hỗ trợ đầy đủ tiếng Việt, được nhúng vào bundle
+import fontUrl from './assets/DejaVuSans.ttf?url';
+
+function hexToRgb(hex: string) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+}
+
+export async function exportPdf(
+  originalBytes: ArrayBuffer,
+  elements: EditorElement[],
+): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(originalBytes);
+  doc.registerFontkit(fontkit);
+
+  let embeddedFont = null;
+  if (elements.some((el) => el.type === 'text' && el.text.trim() !== '')) {
+    const fontBytes = await (await fetch(fontUrl)).arrayBuffer();
+    embeddedFont = await doc.embedFont(fontBytes, { subset: true });
+  }
+
+  const pages = doc.getPages();
+
+  for (const el of elements) {
+    const page = pages[el.page];
+    if (!page) continue;
+    const pageH = page.getHeight();
+
+    if (el.type === 'whiteout' || el.type === 'highlight') {
+      page.drawRectangle({
+        x: el.x,
+        y: pageH - el.y - el.h,
+        width: el.w,
+        height: el.h,
+        color: el.type === 'whiteout' ? rgb(1, 1, 1) : rgb(1, 0.92, 0.23),
+        opacity: el.type === 'whiteout' ? 1 : 0.45,
+      });
+    } else if (el.type === 'text' && embeddedFont && el.text.trim() !== '') {
+      const lineHeight = el.size * 1.25;
+      // drawText nhận y là baseline của dòng đầu; phần tử HTML neo theo
+      // mép trên nên dịch xuống xấp xỉ chiều cao ascent của font.
+      page.drawText(el.text, {
+        x: el.x,
+        y: pageH - el.y - el.size,
+        size: el.size,
+        font: embeddedFont,
+        color: hexToRgb(el.color),
+        lineHeight,
+      });
+    }
+  }
+
+  return doc.save();
+}
+
+export function downloadBytes(bytes: Uint8Array, fileName: string) {
+  const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
