@@ -23,6 +23,8 @@ export interface RectElement {
   y: number;
   w: number;
   h: number;
+  /** Màu tô của ô xoá, lấy mẫu từ nền xung quanh để hoà vào trang. */
+  fill?: string;
 }
 
 export type EditorElement = TextElement | RectElement;

@@ -180,9 +180,10 @@ body {
   border: 1px solid transparent;
 }
 
-.rect-el.whiteout {
-  background: #fff;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+/* Ô xoá không có viền để hoà hẳn vào nền trang (màu tô đặt inline theo
+   màu nền lấy mẫu); chỉ lộ diện khi di chuột hoặc đang được chọn. */
+.rect-el.whiteout:hover:not(.selected) {
+  box-shadow: 0 0 0 1px rgba(26, 115, 232, 0.5);
 }
 
 .rect-el.highlight {

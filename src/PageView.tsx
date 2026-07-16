@@ -62,6 +62,51 @@ export const PageView = memo(function PageView(props: PageViewProps) {
     return () => task.cancel();
   }, [page, scale, pageNumber]);
 
+  // Lấy màu nền quanh một hình chữ nhật (đơn vị PDF) bằng cách đọc dải
+  // pixel viền ngoài của nó trên canvas và lấy trung vị từng kênh màu —
+  // trung vị bỏ qua được chữ/đường kẻ lọt vào dải mẫu.
+  function sampleBackground(x: number, y: number, w: number, h: number): string | null {
+    const canvas = canvasRef.current;
+    if (!canvas || !page || canvas.width === 0) return null;
+    const base = page.getViewport({ scale: 1 });
+    const f = canvas.width / base.width; // pixel canvas trên mỗi đơn vị PDF
+    const ctx = canvas.getContext('2d')!;
+    const m = Math.max(3, Math.round(3 * f)); // bề dày dải mẫu
+    const x0 = Math.round(x * f);
+    const y0 = Math.round(y * f);
+    const x1 = Math.round((x + w) * f);
+    const y1 = Math.round((y + h) * f);
+    const strips: [number, number, number, number][] = [
+      [x0 - m, y0 - m, x1 - x0 + 2 * m, m], // trên
+      [x0 - m, y1, x1 - x0 + 2 * m, m], // dưới
+      [x0 - m, y0, m, y1 - y0], // trái
+      [x1, y0, m, y1 - y0], // phải
+    ];
+    const rs: number[] = [];
+    const gs: number[] = [];
+    const bs: number[] = [];
+    for (let [sx, sy, sw, sh] of strips) {
+      if (sx < 0) { sw += sx; sx = 0; }
+      if (sy < 0) { sh += sy; sy = 0; }
+      sw = Math.min(sw, canvas.width - sx);
+      sh = Math.min(sh, canvas.height - sy);
+      if (sw <= 0 || sh <= 0) continue;
+      const data = ctx.getImageData(sx, sy, sw, sh).data;
+      for (let i = 0; i < data.length; i += 4) {
+        rs.push(data[i]);
+        gs.push(data[i + 1]);
+        bs.push(data[i + 2]);
+      }
+    }
+    if (rs.length === 0) return null;
+    const median = (arr: number[]) => {
+      arr.sort((a, b) => a - b);
+      return arr[arr.length >> 1];
+    };
+    const hex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${hex(median(rs))}${hex(median(gs))}${hex(median(bs))}`;
+  }
+
   // Toạ độ chuột -> đơn vị PDF (scale 1)
   function toPdfCoords(e: { clientX: number; clientY: number }) {
     const rect = overlayRef.current!.getBoundingClientRect();
@@ -127,6 +172,9 @@ export const PageView = memo(function PageView(props: PageViewProps) {
         w,
         h,
       };
+      if (tool === 'whiteout') {
+        el.fill = sampleBackground(x, y, w, h) ?? '#ffffff';
+      }
       props.onAddElement(el);
       props.onSelect(el.id);
       props.onToolDone();
@@ -177,6 +225,11 @@ export const PageView = memo(function PageView(props: PageViewProps) {
                 onUpdate={props.onUpdateElement}
                 onDelete={props.onDeleteElement}
                 onSelect={props.onSelect}
+                onSettled={(r) => {
+                  if (r.type !== 'whiteout') return;
+                  const fill = sampleBackground(r.x, r.y, r.w, r.h);
+                  if (fill) props.onUpdateElement(r.id, { fill });
+                }}
               />
             ),
           )}
@@ -233,17 +286,26 @@ function useDrag(
   };
 }
 
-function RectBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelect }: ElProps<RectElement>) {
+function RectBox({
+  el,
+  scale,
+  selected,
+  toPdfCoords,
+  onUpdate,
+  onDelete,
+  onSelect,
+  onSettled,
+}: ElProps<RectElement> & { onSettled: (el: RectElement) => void }) {
   const move = useDrag(
     toPdfCoords,
     (dx, dy) => onUpdate(el.id, { x: el.x + dx, y: el.y + dy }),
-    () => {},
+    () => onSettled(el),
   );
   const resize = useDrag(
     toPdfCoords,
     (dx, dy) =>
       onUpdate(el.id, { w: Math.max(4, el.w + dx), h: Math.max(4, el.h + dy) }),
-    () => {},
+    () => onSettled(el),
   );
 
   return (
@@ -254,6 +316,7 @@ function RectBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
         top: el.y * scale,
         width: el.w * scale,
         height: el.h * scale,
+        background: el.type === 'whiteout' ? (el.fill ?? '#ffffff') : undefined,
       }}
       {...move}
       onPointerDown={(e) => {
