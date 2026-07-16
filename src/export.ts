@@ -4,6 +4,18 @@ import type { EditorElement } from './types';
 // Font DejaVu Sans hỗ trợ đầy đủ tiếng Việt, được nhúng vào bundle
 import fontUrl from './assets/DejaVuSans.ttf?url';
 
+// Khi build, font được inline thành data URL — giải mã trực tiếp thay vì
+// fetch để không phụ thuộc CSP connect-src của trang host.
+async function loadFontBytes(): Promise<ArrayBuffer> {
+  if (fontUrl.startsWith('data:')) {
+    const bin = atob(fontUrl.slice(fontUrl.indexOf(',') + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr.buffer;
+  }
+  return (await fetch(fontUrl)).arrayBuffer();
+}
+
 function hexToRgb(hex: string) {
   const n = parseInt(hex.replace('#', ''), 16);
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
@@ -18,8 +30,7 @@ export async function exportPdf(
 
   let embeddedFont = null;
   if (elements.some((el) => el.type === 'text' && el.text.trim() !== '')) {
-    const fontBytes = await (await fetch(fontUrl)).arrayBuffer();
-    embeddedFont = await doc.embedFont(fontBytes, { subset: true });
+    embeddedFont = await doc.embedFont(await loadFontBytes(), { subset: true });
   }
 
   const pages = doc.getPages();
