@@ -52,10 +52,10 @@ export default function App() {
   }, []);
 
   async function handleExport() {
-    if (!originalBytes.current) return;
+    if (!originalBytes.current || !doc) return;
     setBusy(true);
     try {
-      const out = await exportPdf(originalBytes.current, elements);
+      const out = await exportPdf(originalBytes.current, elements, doc);
       const base = fileName.replace(/\.pdf$/i, '');
       downloadBytes(out, `${base}-da-sua.pdf`);
     } catch (err) {
