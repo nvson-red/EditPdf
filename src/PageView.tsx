@@ -198,7 +198,10 @@ export const PageView = memo(function PageView(props: PageViewProps) {
         <div
           ref={overlayRef}
           className="overlay"
-          style={{ cursor }}
+          style={{
+            cursor,
+            touchAction: tool === 'select' ? 'pan-x pan-y pinch-zoom' : 'none',
+          }}
           onPointerDown={handleOverlayPointerDown}
           onPointerMove={handleOverlayPointerMove}
           onPointerUp={handleOverlayPointerUp}
