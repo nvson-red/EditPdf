@@ -23,8 +23,10 @@ export interface RectElement {
   y: number;
   w: number;
   h: number;
-  /** Màu tô của ô xoá, lấy mẫu từ nền xung quanh để hoà vào trang. */
+  /** Màu tô: ô xoá tự lấy mẫu từ nền xung quanh; đánh dấu mặc định vàng. */
   fill?: string;
+  /** true khi user tự chọn màu — không tự lấy mẫu lại khi di chuyển nữa. */
+  fillLocked?: boolean;
 }
 
 export type EditorElement = TextElement | RectElement;

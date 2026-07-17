@@ -195,8 +195,20 @@ body {
   box-shadow: 0 0 0 1px rgba(26, 115, 232, 0.5);
 }
 
-.rect-el.highlight {
-  background: rgba(255, 235, 59, 0.45);
+/* Màu nền của highlight đặt inline theo màu user chọn */
+
+/* Chế độ hút màu: mọi phần tử con nhường sự kiện chạm cho overlay */
+.overlay.picking > * {
+  pointer-events: none;
+}
+
+.pick-hint {
+  padding: 6px 12px;
+  background: #fef7e0;
+  border-bottom: 1px solid #f9d97a;
+  color: #7a5b00;
+  font-size: 13px;
+  text-align: center;
 }
 
 .rect-el.selected {

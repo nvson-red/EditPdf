@@ -46,10 +46,7 @@ export async function exportPdf(
         y: pageH - el.y - el.h,
         width: el.w,
         height: el.h,
-        color:
-          el.type === 'whiteout'
-            ? hexToRgb(el.fill ?? '#ffffff')
-            : rgb(1, 0.92, 0.23),
+        color: hexToRgb(el.fill ?? (el.type === 'whiteout' ? '#ffffff' : '#ffeb3b')),
         opacity: el.type === 'whiteout' ? 1 : 0.45,
       });
     } else if (el.type === 'text' && embeddedFont && el.text.trim() !== '') {

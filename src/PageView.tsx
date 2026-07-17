@@ -15,6 +15,10 @@ interface PageViewProps {
   onDeleteElement: (id: string) => void;
   onSelect: (id: string | null) => void;
   onToolDone: () => void;
+  /** Đang ở chế độ hút màu — chạm vào trang sẽ lấy màu tại điểm chạm. */
+  picking: boolean;
+  onPickColor: (color: string) => void;
+  onStartEyedrop: (id: string) => void;
 }
 
 interface DraftRect {
@@ -123,6 +127,19 @@ export const PageView = memo(function PageView(props: PageViewProps) {
     return `#${hex(median(rs))}${hex(median(gs))}${hex(median(bs))}`;
   }
 
+  // Đọc màu một điểm trên trang (toạ độ đơn vị PDF)
+  function samplePixel(x: number, y: number): string | null {
+    const canvas = canvasRef.current;
+    if (!canvas || !page || canvas.width === 0) return null;
+    const base = page.getViewport({ scale: 1 });
+    const f = canvas.width / base.width;
+    const px = Math.min(canvas.width - 1, Math.max(0, Math.round(x * f)));
+    const py = Math.min(canvas.height - 1, Math.max(0, Math.round(y * f)));
+    const d = canvas.getContext('2d')!.getImageData(px, py, 1, 1).data;
+    const hex = (v: number) => v.toString(16).padStart(2, '0');
+    return `#${hex(d[0])}${hex(d[1])}${hex(d[2])}`;
+  }
+
   // Toạ độ chuột -> đơn vị PDF (scale 1)
   function toPdfCoords(e: { clientX: number; clientY: number }) {
     const rect = overlayRef.current!.getBoundingClientRect();
@@ -133,6 +150,14 @@ export const PageView = memo(function PageView(props: PageViewProps) {
   }
 
   function handleOverlayPointerDown(e: React.PointerEvent) {
+    if (props.picking) {
+      // Ở chế độ hút màu, mọi phần tử con đã tắt pointer-events nên
+      // sự kiện luôn tới overlay — lấy màu tại điểm chạm rồi thoát.
+      const { x, y } = toPdfCoords(e);
+      const color = samplePixel(x, y);
+      if (color) props.onPickColor(color);
+      return;
+    }
     if (e.target !== overlayRef.current) return;
     const { x, y } = toPdfCoords(e);
 
@@ -215,10 +240,13 @@ export const PageView = memo(function PageView(props: PageViewProps) {
         <canvas ref={canvasRef} />
         <div
           ref={overlayRef}
-          className="overlay"
+          className={`overlay${props.picking ? ' picking' : ''}`}
           style={{
-            cursor,
-            touchAction: tool === 'select' ? 'pan-x pan-y pinch-zoom' : 'none',
+            cursor: props.picking ? 'crosshair' : cursor,
+            touchAction:
+              tool === 'select' && !props.picking
+                ? 'pan-x pan-y pinch-zoom'
+                : 'none',
           }}
           onPointerDown={handleOverlayPointerDown}
           onPointerMove={handleOverlayPointerMove}
@@ -236,6 +264,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
                 onUpdate={props.onUpdateElement}
                 onDelete={props.onDeleteElement}
                 onSelect={props.onSelect}
+                onStartEyedrop={props.onStartEyedrop}
               />
             ) : (
               <RectBox
@@ -247,8 +276,9 @@ export const PageView = memo(function PageView(props: PageViewProps) {
                 onUpdate={props.onUpdateElement}
                 onDelete={props.onDeleteElement}
                 onSelect={props.onSelect}
+                onStartEyedrop={props.onStartEyedrop}
                 onSettled={(r) => {
-                  if (r.type !== 'whiteout') return;
+                  if (r.type !== 'whiteout' || r.fillLocked) return;
                   const fill = sampleBackground(r.x, r.y, r.w, r.h);
                   if (fill) props.onUpdateElement(r.id, { fill });
                 }}
@@ -280,6 +310,12 @@ interface ElProps<T> {
   onUpdate: (id: string, patch: Partial<EditorElement>) => void;
   onDelete: (id: string) => void;
   onSelect: (id: string | null) => void;
+  onStartEyedrop: (id: string) => void;
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
 /** Kéo-thả chung: trả về handler pointerdown bắt đầu di chuyển phần tử. */
@@ -321,6 +357,7 @@ function RectBox({
   onUpdate,
   onDelete,
   onSelect,
+  onStartEyedrop,
   onSettled,
 }: ElProps<RectElement> & { onSettled: (el: RectElement) => void }) {
   const move = useDrag(
@@ -343,7 +380,10 @@ function RectBox({
         top: el.y * scale,
         width: el.w * scale,
         height: el.h * scale,
-        background: el.type === 'whiteout' ? (el.fill ?? '#ffffff') : undefined,
+        background:
+          el.type === 'whiteout'
+            ? (el.fill ?? '#ffffff')
+            : hexToRgba(el.fill ?? '#ffeb3b', 0.45),
       }}
       {...move}
       onPointerDown={(e) => {
@@ -353,17 +393,22 @@ function RectBox({
     >
       {selected && (
         <>
-          <button
-            className="el-delete"
-            title="Xoá phần tử"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(el.id);
-            }}
-          >
-            ✕
-          </button>
+          <div className="text-toolbar" onPointerDown={(e) => e.stopPropagation()}>
+            <input
+              type="color"
+              title="Chọn màu"
+              value={el.fill ?? (el.type === 'whiteout' ? '#ffffff' : '#ffeb3b')}
+              onChange={(e) =>
+                onUpdate(el.id, { fill: e.target.value, fillLocked: true })
+              }
+            />
+            <button title="Lấy màu từ một điểm trên trang" onClick={() => onStartEyedrop(el.id)}>
+              💧
+            </button>
+            <button title="Xoá phần tử" onClick={() => onDelete(el.id)}>
+              ✕
+            </button>
+          </div>
           <div className="resize-handle" {...resize} />
         </>
       )}
@@ -371,7 +416,7 @@ function RectBox({
   );
 }
 
-function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelect }: ElProps<TextElement>) {
+function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelect, onStartEyedrop }: ElProps<TextElement>) {
   const editRef = useRef<HTMLDivElement>(null);
 
   // contentEditable không được điều khiển bởi React để giữ vị trí con trỏ;
@@ -424,6 +469,9 @@ function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
             value={el.color}
             onChange={(e) => onUpdate(el.id, { color: e.target.value })}
           />
+          <button title="Lấy màu chữ từ một điểm trên trang" onClick={() => onStartEyedrop(el.id)}>
+            💧
+          </button>
           <button title="Xoá phần tử" onClick={() => onDelete(el.id)}>
             ✕
           </button>

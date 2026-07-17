@@ -12,6 +12,8 @@ export default function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [scale, setScale] = useState(1.25);
+  // id phần tử đang chờ hút màu từ trang (null = không ở chế độ hút màu)
+  const [eyedropperId, setEyedropperId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const originalBytes = useRef<ArrayBuffer | null>(null);
@@ -63,9 +65,13 @@ export default function App() {
     }
   }
 
-  // Phím Delete xoá phần tử đang chọn (trừ khi đang gõ chữ)
+  // Phím Delete xoá phần tử đang chọn (trừ khi đang gõ chữ); Esc thoát hút màu
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setEyedropperId(null);
+        return;
+      }
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const active = document.activeElement as HTMLElement | null;
       if (active && (active.isContentEditable || active.tagName === 'INPUT')) return;
@@ -94,6 +100,26 @@ export default function App() {
     setSelectedId((cur) => (cur === id ? null : cur));
   }, []);
   const toolDone = useCallback(() => setTool('select'), []);
+
+  // Áp màu hút được từ trang cho phần tử đang chờ
+  const applyPickedColor = useCallback(
+    (color: string) => {
+      setEyedropperId((id) => {
+        if (id) {
+          setElements((els) =>
+            els.map((el) => {
+              if (el.id !== id) return el;
+              return el.type === 'text'
+                ? { ...el, color }
+                : { ...el, fill: color, fillLocked: true };
+            }),
+          );
+        }
+        return null;
+      });
+    },
+    [],
+  );
 
   const toolButtons: { key: Tool; label: string; hint: string }[] = [
     { key: 'select', label: '🖱 Chọn', hint: 'Chọn / di chuyển phần tử' },
@@ -165,6 +191,12 @@ export default function App() {
         )}
       </header>
 
+      {eyedropperId && (
+        <div className="pick-hint">
+          💧 Chạm vào một điểm trên trang để lấy màu tại đó (Esc để huỷ)
+        </div>
+      )}
+
       <main className="pages">
         {!doc && (
           <div className="empty">
@@ -190,6 +222,9 @@ export default function App() {
               onDeleteElement={deleteElement}
               onSelect={setSelectedId}
               onToolDone={toolDone}
+              picking={eyedropperId !== null}
+              onPickColor={applyPickedColor}
+              onStartEyedrop={setEyedropperId}
             />
           ))}
       </main>
