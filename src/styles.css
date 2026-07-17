@@ -133,6 +133,23 @@ body {
   display: block;
 }
 
+.text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+}
+
+.text-layer span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+}
+
+.text-layer span::selection {
+  background: rgba(0, 100, 200, 0.3);
+}
+
 .overlay {
   position: absolute;
   inset: 0;
@@ -187,6 +204,7 @@ body {
 .rect-el {
   position: absolute;
   border: 1px solid transparent;
+  pointer-events: auto;
 }
 
 /* Ô xoá không có viền để hoà hẳn vào nền trang (màu tô đặt inline theo
@@ -245,6 +263,7 @@ body {
 .text-el {
   position: absolute;
   min-width: 20px;
+  pointer-events: auto;
 }
 
 .text-el .text-edit {

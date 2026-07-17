@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import { pdfjs } from './pdf';
 import type { EditorElement, RectElement, TextElement, Tool } from './types';
 import { newId } from './types';
 
@@ -50,6 +51,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
   const { doc, pageNumber, scale, tool } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [draft, setDraft] = useState<DraftRect | null>(null);
 
@@ -83,6 +85,26 @@ export const PageView = memo(function PageView(props: PageViewProps) {
     });
     return () => task.cancel();
   }, [page, scale, pageNumber]);
+
+  useEffect(() => {
+    const container = textLayerRef.current;
+    if (!page || !container) return;
+    const viewport = page.getViewport({ scale });
+    container.style.width = `${viewport.width}px`;
+    container.style.height = `${viewport.height}px`;
+    container.innerHTML = '';
+    let layer: InstanceType<typeof pdfjs.TextLayer> | null = null;
+    page.getTextContent().then((textContent) => {
+      if (!container.isConnected) return;
+      layer = new pdfjs.TextLayer({
+        textContentSource: textContent,
+        container,
+        viewport,
+      });
+      layer.render();
+    });
+    return () => { layer?.cancel(); };
+  }, [page, scale]);
 
   // Lấy màu nền quanh một hình chữ nhật (đơn vị PDF) bằng cách đọc dải
   // pixel viền ngoài của nó trên canvas và lấy trung vị từng kênh màu —
@@ -222,7 +244,6 @@ export const PageView = memo(function PageView(props: PageViewProps) {
       }
       props.onAddElement(el);
       props.onSelect(el.id);
-      props.onToolDone();
     }
   }
 
@@ -241,6 +262,13 @@ export const PageView = memo(function PageView(props: PageViewProps) {
       >
         <canvas ref={canvasRef} />
         <div
+          ref={textLayerRef}
+          className="text-layer"
+          onPointerDown={() => {
+            if (tool === 'select') props.onSelect(null);
+          }}
+        />
+        <div
           ref={overlayRef}
           className={`overlay${props.picking ? ' picking' : ''}`}
           style={{
@@ -249,6 +277,8 @@ export const PageView = memo(function PageView(props: PageViewProps) {
               tool === 'select' && !props.picking
                 ? 'pan-x pan-y pinch-zoom'
                 : 'none',
+            pointerEvents:
+              tool === 'select' && !props.picking ? 'none' : undefined,
           }}
           onPointerDown={handleOverlayPointerDown}
           onPointerMove={handleOverlayPointerMove}
