@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/pdf-editor-app-ovnpp8
   workflow_dispatch:
 
 permissions:
