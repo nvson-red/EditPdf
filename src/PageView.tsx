@@ -24,6 +24,22 @@ interface DraftRect {
   y1: number;
 }
 
+// Khoá cuộn trang trong lúc kéo: touch-action bị Safari/iOS tôn trọng không
+// triệt để, nên chặn thẳng touchmove ở mức document (non-passive) khi một
+// thao tác kéo đang diễn ra. Đếm số lượt khoá để các thao tác lồng nhau an toàn.
+let scrollLockCount = 0;
+const preventTouchScroll = (e: TouchEvent) => e.preventDefault();
+function lockPageScroll() {
+  if (++scrollLockCount === 1) {
+    document.addEventListener('touchmove', preventTouchScroll, { passive: false });
+  }
+}
+function unlockPageScroll() {
+  if (scrollLockCount > 0 && --scrollLockCount === 0) {
+    document.removeEventListener('touchmove', preventTouchScroll);
+  }
+}
+
 export const PageView = memo(function PageView(props: PageViewProps) {
   const { doc, pageNumber, scale, tool } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -142,6 +158,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
 
     if (tool === 'whiteout' || tool === 'highlight') {
       overlayRef.current!.setPointerCapture(e.pointerId);
+      lockPageScroll();
       setDraft({ x0: x, y0: y, x1: x, y1: y });
       return;
     }
@@ -157,6 +174,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
 
   function handleOverlayPointerUp() {
     if (!draft) return;
+    unlockPageScroll();
     const x = Math.min(draft.x0, draft.x1);
     const y = Math.min(draft.y0, draft.y1);
     const w = Math.abs(draft.x1 - draft.x0);
@@ -205,6 +223,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
           onPointerDown={handleOverlayPointerDown}
           onPointerMove={handleOverlayPointerMove}
           onPointerUp={handleOverlayPointerUp}
+          onPointerCancel={handleOverlayPointerUp}
         >
           {props.elements.map((el) =>
             el.type === 'text' ? (
@@ -270,11 +289,18 @@ function useDrag(
   onDone: () => void,
 ) {
   const start = useRef<{ x: number; y: number } | null>(null);
+  const end = () => {
+    if (!start.current) return;
+    start.current = null;
+    unlockPageScroll();
+    onDone();
+  };
   return {
     onPointerDown(e: React.PointerEvent) {
       e.stopPropagation();
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       start.current = toPdfCoords(e);
+      lockPageScroll();
     },
     onPointerMove(e: React.PointerEvent) {
       if (!start.current) return;
@@ -282,10 +308,8 @@ function useDrag(
       onMove(p.x - start.current.x, p.y - start.current.y);
       start.current = p;
     },
-    onPointerUp() {
-      start.current = null;
-      onDone();
-    },
+    onPointerUp: end,
+    onPointerCancel: end,
   };
 }
 
