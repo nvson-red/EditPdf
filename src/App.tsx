@@ -1,14 +1,83 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { pdfjs } from './pdf';
 import { PageView } from './PageView';
 import { exportPdf, downloadBytes } from './export';
 import type { EditorElement, Tool } from './types';
 
+// ---- Lịch sử chỉnh sửa (undo/redo) ----
+// 'add'/'delete' tự ghi mốc lịch sử; 'patch' thì không (dùng cho chuỗi thay
+// đổi liên tục như kéo chuột) — trước mỗi chuỗi như vậy component phát
+// 'snapshot' một lần, nên cả cú kéo chỉ là MỘT bước undo.
+interface HistState {
+  elements: EditorElement[];
+  past: EditorElement[][];
+  future: EditorElement[][];
+}
+
+type HistAction =
+  | { type: 'reset' }
+  | { type: 'snapshot' }
+  | { type: 'add'; el: EditorElement }
+  | { type: 'delete'; id: string }
+  | { type: 'patch'; id: string; patch: Partial<EditorElement> }
+  | { type: 'undo' }
+  | { type: 'redo' };
+
+const MAX_HISTORY = 100;
+
+function histReducer(s: HistState, a: HistAction): HistState {
+  const pushed = () => [...s.past.slice(-(MAX_HISTORY - 1)), s.elements];
+  switch (a.type) {
+    case 'reset':
+      return { elements: [], past: [], future: [] };
+    case 'snapshot':
+      return { ...s, past: pushed(), future: [] };
+    case 'add':
+      return { elements: [...s.elements, a.el], past: pushed(), future: [] };
+    case 'delete':
+      return {
+        elements: s.elements.filter((el) => el.id !== a.id),
+        past: pushed(),
+        future: [],
+      };
+    case 'patch':
+      return {
+        ...s,
+        elements: s.elements.map((el) =>
+          el.id === a.id ? ({ ...el, ...a.patch } as EditorElement) : el,
+        ),
+      };
+    case 'undo': {
+      const prev = s.past[s.past.length - 1];
+      if (!prev) return s;
+      return {
+        elements: prev,
+        past: s.past.slice(0, -1),
+        future: [...s.future, s.elements],
+      };
+    }
+    case 'redo': {
+      const next = s.future[s.future.length - 1];
+      if (!next) return s;
+      return {
+        elements: next,
+        past: [...s.past, s.elements],
+        future: s.future.slice(0, -1),
+      };
+    }
+  }
+}
+
 export default function App() {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [fileName, setFileName] = useState('');
-  const [elements, setElements] = useState<EditorElement[]>([]);
+  const [hist, dispatch] = useReducer(histReducer, {
+    elements: [],
+    past: [],
+    future: [],
+  });
+  const elements = hist.elements;
   const [tool, setTool] = useState<Tool>('select');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [scale, setScale] = useState(1.25);
@@ -41,7 +110,7 @@ export default function App() {
         return loaded;
       });
       setFileName(file.name);
-      setElements([]);
+      dispatch({ type: 'reset' });
       setSelectedId(null);
       setTool('select');
     } catch (err) {
@@ -65,60 +134,81 @@ export default function App() {
     }
   }
 
-  // Phím Delete xoá phần tử đang chọn (trừ khi đang gõ chữ); Esc thoát hút màu
+  const undo = useCallback(() => {
+    dispatch({ type: 'undo' });
+    setSelectedId(null);
+  }, []);
+  const redo = useCallback(() => {
+    dispatch({ type: 'redo' });
+    setSelectedId(null);
+  }, []);
+
+  // Phím tắt: Delete xoá phần tử đang chọn; Esc thoát hút màu;
+  // Ctrl/Cmd+Z hoàn tác, Ctrl+Y / Ctrl+Shift+Z làm lại
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         setEyedropperId(null);
         return;
       }
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const active = document.activeElement as HTMLElement | null;
-      if (active && (active.isContentEditable || active.tagName === 'INPUT')) return;
+      const typing =
+        active && (active.isContentEditable || active.tagName === 'INPUT');
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && !typing && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && !typing && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (typing) return;
       if (selectedId) {
-        setElements((els) => els.filter((el) => el.id !== selectedId));
+        dispatch({ type: 'delete', id: selectedId });
         setSelectedId(null);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId]);
+  }, [selectedId, undo, redo]);
 
   const addElement = useCallback(
-    (el: EditorElement) => setElements((els) => [...els, el]),
+    (el: EditorElement) => dispatch({ type: 'add', el }),
     [],
   );
   const updateElement = useCallback(
     (id: string, patch: Partial<EditorElement>) =>
-      setElements((els) =>
-        els.map((el) => (el.id === id ? ({ ...el, ...patch } as EditorElement) : el)),
-      ),
+      dispatch({ type: 'patch', id, patch }),
     [],
   );
   const deleteElement = useCallback((id: string) => {
-    setElements((els) => els.filter((el) => el.id !== id));
+    dispatch({ type: 'delete', id });
     setSelectedId((cur) => (cur === id ? null : cur));
   }, []);
+  const snapshot = useCallback(() => dispatch({ type: 'snapshot' }), []);
   const toolDone = useCallback(() => setTool('select'), []);
 
   // Áp màu hút được từ trang cho phần tử đang chờ
   const applyPickedColor = useCallback(
     (color: string) => {
-      setEyedropperId((id) => {
-        if (id) {
-          setElements((els) =>
-            els.map((el) => {
-              if (el.id !== id) return el;
-              return el.type === 'text'
-                ? { ...el, color }
-                : { ...el, fill: color, fillLocked: true };
-            }),
-          );
-        }
-        return null;
-      });
+      const el = elements.find((it) => it.id === eyedropperId);
+      if (el) {
+        dispatch({ type: 'snapshot' });
+        dispatch({
+          type: 'patch',
+          id: el.id,
+          patch:
+            el.type === 'text' ? { color } : { fill: color, fillLocked: true },
+        });
+      }
+      setEyedropperId(null);
     },
-    [],
+    [elements, eyedropperId],
   );
 
   const toolButtons: { key: Tool; label: string; hint: string }[] = [
@@ -173,6 +263,21 @@ export default function App() {
               </button>
             ))}
             <span className="divider" />
+            <button
+              title="Hoàn tác (Ctrl+Z)"
+              onClick={undo}
+              disabled={hist.past.length === 0}
+            >
+              ↩ Hoàn tác
+            </button>
+            <button
+              title="Làm lại (Ctrl+Shift+Z)"
+              onClick={redo}
+              disabled={hist.future.length === 0}
+            >
+              ↪ Làm lại
+            </button>
+            <span className="divider" />
             <button onClick={() => setScale((s) => Math.max(0.5, +(s - 0.25).toFixed(2)))}>
               −
             </button>
@@ -222,6 +327,7 @@ export default function App() {
               onDeleteElement={deleteElement}
               onSelect={setSelectedId}
               onToolDone={toolDone}
+              onSnapshot={snapshot}
               picking={eyedropperId !== null}
               onPickColor={applyPickedColor}
               onStartEyedrop={setEyedropperId}

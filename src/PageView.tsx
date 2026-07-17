@@ -15,6 +15,8 @@ interface PageViewProps {
   onDeleteElement: (id: string) => void;
   onSelect: (id: string | null) => void;
   onToolDone: () => void;
+  /** Ghi mốc lịch sử trước một chuỗi thay đổi liên tục (kéo, gõ chữ...). */
+  onSnapshot: () => void;
   /** Đang ở chế độ hút màu — chạm vào trang sẽ lấy màu tại điểm chạm. */
   picking: boolean;
   onPickColor: (color: string) => void;
@@ -265,6 +267,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
                 onDelete={props.onDeleteElement}
                 onSelect={props.onSelect}
                 onStartEyedrop={props.onStartEyedrop}
+                onSnapshot={props.onSnapshot}
               />
             ) : (
               <RectBox
@@ -277,6 +280,7 @@ export const PageView = memo(function PageView(props: PageViewProps) {
                 onDelete={props.onDeleteElement}
                 onSelect={props.onSelect}
                 onStartEyedrop={props.onStartEyedrop}
+                onSnapshot={props.onSnapshot}
                 onSettled={(r) => {
                   if (r.type !== 'whiteout' || r.fillLocked) return;
                   const fill = sampleBackground(r.x, r.y, r.w, r.h);
@@ -287,12 +291,18 @@ export const PageView = memo(function PageView(props: PageViewProps) {
           )}
           {draft && (
             <div
-              className={`rect-el ${tool}`}
+              className="rect-el"
               style={{
                 left: Math.min(draft.x0, draft.x1) * scale,
                 top: Math.min(draft.y0, draft.y1) * scale,
                 width: Math.abs(draft.x1 - draft.x0) * scale,
                 height: Math.abs(draft.y1 - draft.y0) * scale,
+                background:
+                  tool === 'whiteout'
+                    ? 'rgba(255, 255, 255, 0.85)'
+                    : 'rgba(255, 235, 59, 0.45)',
+                outline: '1px dashed #1a73e8',
+                pointerEvents: 'none',
               }}
             />
           )}
@@ -311,6 +321,7 @@ interface ElProps<T> {
   onDelete: (id: string) => void;
   onSelect: (id: string | null) => void;
   onStartEyedrop: (id: string) => void;
+  onSnapshot: () => void;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -323,6 +334,7 @@ function useDrag(
   toPdfCoords: ElProps<EditorElement>['toPdfCoords'],
   onMove: (dx: number, dy: number) => void,
   onDone: () => void,
+  onStart?: () => void,
 ) {
   const start = useRef<{ x: number; y: number } | null>(null);
   const end = () => {
@@ -337,6 +349,7 @@ function useDrag(
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       start.current = toPdfCoords(e);
       lockPageScroll();
+      onStart?.();
     },
     onPointerMove(e: React.PointerEvent) {
       if (!start.current) return;
@@ -358,18 +371,21 @@ function RectBox({
   onDelete,
   onSelect,
   onStartEyedrop,
+  onSnapshot,
   onSettled,
 }: ElProps<RectElement> & { onSettled: (el: RectElement) => void }) {
   const move = useDrag(
     toPdfCoords,
     (dx, dy) => onUpdate(el.id, { x: el.x + dx, y: el.y + dy }),
     () => onSettled(el),
+    onSnapshot,
   );
   const resize = useDrag(
     toPdfCoords,
     (dx, dy) =>
       onUpdate(el.id, { w: Math.max(4, el.w + dx), h: Math.max(4, el.h + dy) }),
     () => onSettled(el),
+    onSnapshot,
   );
 
   return (
@@ -398,6 +414,7 @@ function RectBox({
               type="color"
               title="Chọn màu"
               value={el.fill ?? (el.type === 'whiteout' ? '#ffffff' : '#ffeb3b')}
+              onFocus={onSnapshot}
               onChange={(e) =>
                 onUpdate(el.id, { fill: e.target.value, fillLocked: true })
               }
@@ -416,7 +433,7 @@ function RectBox({
   );
 }
 
-function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelect, onStartEyedrop }: ElProps<TextElement>) {
+function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelect, onStartEyedrop, onSnapshot }: ElProps<TextElement>) {
   const editRef = useRef<HTMLDivElement>(null);
 
   // contentEditable không được điều khiển bởi React để giữ vị trí con trỏ;
@@ -425,19 +442,30 @@ function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
     if (editRef.current) {
       editRef.current.innerText = el.text;
       if (el.text === '') {
-        // Đợi hết chuỗi sự kiện pointerdown/up/click rồi mới focus,
-        // tránh bị trình duyệt cướp lại focus ngay sau đó.
+        // Focus ngay để không nuốt ký tự đầu khi gõ liền tay; kèm một nhịp
+        // focus lại ở frame sau phòng trình duyệt cướp focus về body trong
+        // chuỗi sự kiện pointerup/click còn dang dở.
         const t = editRef.current;
+        t.focus();
         requestAnimationFrame(() => t.focus());
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Undo/redo đổi text từ bên ngoài — đồng bộ lại DOM (trừ khi đang gõ)
+  useEffect(() => {
+    const t = editRef.current;
+    if (t && document.activeElement !== t && t.innerText !== el.text) {
+      t.innerText = el.text;
+    }
+  }, [el.text]);
+
   const move = useDrag(
     toPdfCoords,
     (dx, dy) => onUpdate(el.id, { x: el.x + dx, y: el.y + dy }),
     () => {},
+    onSnapshot,
   );
 
   return (
@@ -453,13 +481,19 @@ function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
           </span>
           <button
             title="Giảm cỡ chữ"
-            onClick={() => onUpdate(el.id, { size: Math.max(6, el.size - 2) })}
+            onClick={() => {
+              onSnapshot();
+              onUpdate(el.id, { size: Math.max(6, el.size - 2) });
+            }}
           >
             A−
           </button>
           <button
             title="Tăng cỡ chữ"
-            onClick={() => onUpdate(el.id, { size: Math.min(96, el.size + 2) })}
+            onClick={() => {
+              onSnapshot();
+              onUpdate(el.id, { size: Math.min(96, el.size + 2) });
+            }}
           >
             A+
           </button>
@@ -467,6 +501,7 @@ function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
             type="color"
             title="Màu chữ"
             value={el.color}
+            onFocus={onSnapshot}
             onChange={(e) => onUpdate(el.id, { color: e.target.value })}
           />
           <button title="Lấy màu chữ từ một điểm trên trang" onClick={() => onStartEyedrop(el.id)}>
@@ -486,6 +521,11 @@ function TextBox({ el, scale, selected, toPdfCoords, onUpdate, onDelete, onSelec
           fontSize: el.size * scale,
           color: el.color,
           lineHeight: 1.25,
+        }}
+        onFocus={() => {
+          // Ghi mốc trước phiên sửa chữ — cả phiên gõ là một bước undo.
+          // Ô vừa tạo còn trống thì bỏ qua (mốc đã ghi lúc thêm phần tử).
+          if (el.text !== '') onSnapshot();
         }}
         onInput={(e) =>
           onUpdate(el.id, { text: (e.target as HTMLElement).innerText })
